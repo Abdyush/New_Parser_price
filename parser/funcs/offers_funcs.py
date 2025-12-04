@@ -1,0 +1,342 @@
+import time
+import os
+import re
+from datetime import datetime, timedelta
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver import Keys
+from openai import OpenAI
+from typing import Union, List, Tuple
+
+
+# Функция ищет на странице все карточки со специальными предложениями
+def find_offer_cards(browser):
+    # Сначала проверяем есть ли на странице алерт перекрывающий основные элементы и закрываем его
+    try:
+        alert = browser.find_element(By.XPATH, "//div[@class='popup--content' and @data-notification='alert']//button[contains(@class, 'button-primary')]")
+        alert.click()
+        print('На старнице обнаружен алерт и успешно закрыт')
+    except:
+        print('Алерт на странице не обнаружен')
+        
+    cards = browser.find_elements(By.CLASS_NAME, 'card--action')
+    print(f'На странице найдено {len(cards)} карточек с офферами')
+    
+    return len(cards)
+    
+    
+# Функция скроллящая страницу вниз для прогрузки все элементов и кликающая на карточку    
+def click_offer_card(browser, index):
+    for _ in range(15):
+        # находим блок с тегом html
+        block = browser.find_element(By.TAG_NAME, 'html')
+        # и как бы поключившись к нему, имитируем нажатие клавиши вниз
+        block.send_keys(Keys.DOWN)
+        # Спим 1 секунду 
+        # TODO: Оптимизировать ожидание
+        time.sleep(1)
+    print('Проскроллил страницу вниз')
+        
+    # Зачем то снова находим все карточки, есть ли смысл искть их сверху?    
+    cards = browser.find_elements(By.CLASS_NAME, 'card--action')
+    
+    # Ждем пока карточка станет кликабельной
+    WebDriverWait(browser, 10).until(EC.element_to_be_clickable(cards[index]))
+    # Прокручиваем к кнопке
+    browser.execute_script("return arguments[0].scrollIntoView(true);", cards[index])
+    print('Проскроллил к карточке')
+    
+    # Кликаем по карточке
+    cards[index].click()
+
+
+# Функция находит и кликает по кнопке возврата по всем офферам    
+def back_to_all_offers(browser):
+    link_element = browser.find_element(By.CSS_SELECTOR, "a[href='/offers']")
+    link_element.click()
+    
+
+# Функция получение формулы расчетка стоимости суток со скидкой по специальному предложению, с помощью openai
+def get_formula(offer: str) -> str:
+    # Создаем промт, который будет вытаскивать формулу из переданной строки, в которой описана суть специального предложения
+    promt = f'''Есть специальное предложение в отеле, вот оно {offer}, 
+                нам известна стоимость номера за сутки.
+                Прочитай специальное предложение, представь что все его условия выполнены, и извлеки суть в виде математической формулы, 
+                которая рассчитывает итоговую стоимость номера за сутки, с учетом скидки.
+                C - это стоимость за сутки без учета скидки, N - это стоимость номера ЗА СУТКИ с учетом скидки,
+                если в формуле необходимо учесть количество дней, то подставь в формулу сразу цифру - минимально необходимое для скидки количество дней.
+                Знак умножения в формуле обозначь так: '*',
+                Ответ дай в виде формулы, БЕЗ ПОЯСНЕНИЙ'''
+    
+    # Здесь создается переменная client, которая будет содержать объект класса OpenAI. Этот объект используется для взаимодействия с API OpenAI.
+    # в объект передается API-ключ, необходимый для аутентификации при обращении к API
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY")
+    )
+
+    # Вызываем метод create для создания завершения (completion) чата. Результат этого вызова сохраняется в переменной completion.
+    completion = client.chat.completions.create(
+        model="gpt-4.1",                                       # указываем модель
+        temperature=0.1,                                       # Параметр temperature контролирует степень случайности в ответах модели. Значение от 0 до 1. 
+        max_tokens=100,                                        # Указывает максимальное количество токенов (слов и символов), которые могут быть сгенерированы в ответе.
+        top_p=0,                                               # Параметр определяет диапазон разнообразия слов (для четкой формулы разнообразие не нужно)
+        frequency_penalty=0,                                   # Параметр определяет частоту использования одних и тех же слов (нам нужен минимум)
+        presence_penalty=0,                                    # Параметр штрафует слова за то, что оно уже встречалось (нам нужен минимум)
+        messages = [{'role': 'system', 'content': promt}]      # Здесь задаются сообщения, которые передаются модели для контекста. 
+    )                                                          # В данном случае передается одно сообщение с ролью system, которое содержит текст из переменной promt
+        
+    # Функция возвращает ответ модели в виде текста
+    return completion.choices[0].message.content
+
+
+# Функция определяющая на какие категории номеров, распространяется спец предложение
+# TODO: оптимизировать функцию
+def get_category(string: str) -> Union[str, List[str], None]:
+    # Проверяем на наличие фразы "все категории вилл"
+    if "все категории вилл" in string:
+        return "Все виллы"
+    # Проверяем на наличие фразы "все категории"
+    elif "все категории" in string:
+        return "Все категории"
+    # Ищем отдельные категории
+    else:
+        # с помощью регулярного выражения, находим категории попадающие под шаблон (шаблон находить только первое слово после слова "категории")
+        # TODO: оптимизировать поиск
+        matches = re.findall(r'категории «(.*?)»', string)
+        if matches:
+            return matches  # Возвращаем найденные категории
+        else:
+            return None     # Ничего не найдено, пропускаем строку
+        
+
+# Функция ищет в строке даты проживания, определяемые специальным предложением        
+def get_living_dates(string: str) -> Union[List[List[str]], None]:
+    # Проверяем на наличие фразы о бронировании, если есть, занчит речь идет о датах бронироввания и нам не подходит
+    if "бронировани" in string.lower():
+        return None  # Если речь идет о бронировании, возвращаем None
+    
+    # Регулярное выражение для поиска дат
+    date_pattern = r"\d{2}\.\d{2}\.\d{4}"
+    # Ищем все даты в строке
+    dates = re.findall(date_pattern, string)
+    
+    if not dates:
+        return None  # Если дат нет, пропускаем строку
+    
+    # Определяем сегодняшнюю дату
+    today = datetime.today().strftime('%d.%m.%Y')
+    
+    if len(dates) == 2:                # Если нашлось две даты, определяем их как начало и конец
+        dates = [dates]
+    elif len(dates) == 1:              # Если одна, то за начало берем сегодняшнюю дату, так как веротяно, в строке была дата определяющая, крайний день приживания
+        dates = [[today, dates[0]]]
+    elif len(dates) > 2:               # Если больше двух, то ншлись периоды, добавляем их списками в список
+        dates = [list(date_pair) for date_pair in zip(dates[::2], dates[1::2])]
+    else:
+        return None                    # Если ничего не найдено, пропускаем строку
+    
+    # Возвращаем список дат проживания по спец предложению
+    return dates
+
+
+# Функция для спец предложения "Ранее бронирование", его суть в том, что скидка применяется если гость забронировал номер минимум за 60 суток до заезда
+# таким образом, мы форматируем даты проживания прибавляя 60 суток к сегодняшнему дню и определяя переменную -  начало периода спец предложения
+def early_booking(living_dates: List[list[str]]) -> List[list[str]]:
+    for dates in living_dates:
+        dates[0] = (datetime.now() + timedelta(days=60)).strftime('%d.%m.%Y')
+    # Возвращаем обновленный список с датами 
+    return living_dates
+
+
+# Функция проверяет есть ли в строке информация о датах возможного бронирования и возвращает период броинрования в виде списка
+# где первая дата это начало (сегодняшний день), а вторая - конец
+def extract_date_before(text: str) -> Union[List[List[str]], None]:
+    # Проверяем, есть ли в строке информация о проживании, если есть то это строка скорее всего содержит информацию о датах
+    # проживания а не о датах бронирования, в таком случае возвращаем None
+    if "проживани" in text.lower():
+        return None
+    
+    # Определяем регулярное выражение для поиска дат
+    date_pattern = r"\d{2}\.\d{2}\.\d{4}"
+    # Ищем все даты в строке
+    dates = re.findall(date_pattern, text)
+    # Если дат нет, пропускаем строку возвращая None
+    if not dates:
+        return None  
+    
+    # Определяем сегодняшнюю дату
+    today = datetime.today().strftime('%d.%m.%Y')
+    # TODO: оптимизировать проверку
+    # Если в строке есть слово бронирование и содержатся даты, значит вероятнее всего это нужная строка
+    if "бронировани" in text.lower():
+        # Если есть две даты, определяем их как начало и конец
+        if len(dates) == 2:
+            dates = [tuple(dates)]
+        elif len(dates) == 1:
+            dates = [(today, dates[0])]
+        else:
+            return None  # Если ничего не найдено, пропускаем строку
+        
+    # Возвращаем 
+    return dates
+
+
+# Функция определяет суммируется ли специальное предложение с программой лояльности или другими спец предложениями
+# выяснилось, что с другими спецпредложениями никакая акция суммироваться не может, следовательно - нужно удалить данную проверку из функции
+# TODO: оптимизировать функцию
+def analyze_offers(line: str) -> Union[Tuple[bool], Tuple[None]]:
+    # Инициализируем переменные "программа лояльности" и "другие спецпредложения"
+    summ_loyalty = None
+    
+    # Определяем перемнные, списки с возможными фразами свидетельствующими о суммировании
+    loyalty = 'суммируется с программой лояльности'
+    not_loyalty = 'не суммируется с программой лояльности'
+    
+    if loyalty in line.lower() and not_loyalty not in line.lower():
+        summ_loyalty = True
+    elif loyalty not in line.lower() and not_loyalty in line.lower():
+        summ_loyalty = False
+    else:
+        summ_loyalty = None
+        
+    return summ_loyalty
+
+
+# Функция читает строку спец предложения, и опрделеляет от сколько суток проживания оно действует
+def get_min_days(text: str) -> str:
+    # Создаем соответствующий промт
+    promt = f'''Прочитай текст специального предложения в отеле: {text}
+                и определи минимальное количетсво суток, которое необходимо забронировать гостю
+                чтобы получить скидку.
+                Ответ дай в формате цифры, например: "3"'''
+    
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY")
+    )
+
+    # Вызываем метод create для создания завершения (completion) чата. Результат этого вызова сохраняется в переменной completion.
+    completion = client.chat.completions.create(
+        model="gpt-4.1",                                       # указываем модель
+        temperature=0.1,                                       # Параметр temperature контролирует степень случайности в ответах модели. Значение от 0 до 1. 
+        max_tokens=100,                                        # Указывает максимальное количество токенов (слов и символов), которые могут быть сгенерированы в ответе.
+        top_p=0,                                               # Параметр определяет диапазон разнообразия слов 
+        frequency_penalty=0,                                   # Параметр определяет частоту использования одних и тех же слов (нам нужен минимум)
+        presence_penalty=0,                                    # Параметр штрафует слова за то, что оно уже встречалось (нам нужен минимум)
+        messages = [{'role': 'system', 'content': promt}]      # Здесь задаются сообщения, которые передаются модели для контекста. 
+    )                                                          # В данном случае передается одно сообщение с ролью system, которое содержит текст из переменной promt
+    
+    # Функция возвращает ответ модели в виде текста
+    return completion.choices[0].message.content
+        
+
+# Функция собирающая данные с карточки спецпредложения и возвращающая словарь
+def collect_offer_data(browser):
+    # Создаем список lines в который будем добавлять все строки, для того чтобы целиком сформироовать весь текст оффера
+    lines = []
+    
+    category = []           
+    living_dates = []       
+    date_before = []        
+    summ_with_loyalty = False     
+    
+    # Находим элемет страницы где вероятно находиться навание оофера и присваиваем его переменной title
+    title = browser.find_element(By.CLASS_NAME, 'f-h1')
+    print(f"Получил название спецпредложения: {title.text}")
+    
+    # Если название 'Подарочные сертификаты', пропускаем итерацию, так как это не спец предложение
+    if title.text == 'Подарочные сертификаты':
+        print(f"название 'Подарочные сертификаты', это не спец предложение, возвращаемся на страницу с офферами")
+        
+        return None
+    
+    else:   
+        # Добавляем в список строку
+        lines.append(title.text)
+        # Переменной core присваиваем текст элемента, в котором обычно описывается суть спецпредложения, и указана скидка применимая к стоимости проживания
+        core = browser.find_element(By.XPATH, "//div[contains(@class, 'block--content is_cascade')]/p")
+        # Добавляем суть в список
+        lines.append(core.text)
+        
+        # С помощью функции получаем формулу расчитывающую стоимость суток
+        formula = get_formula(core.text)
+        print(f"Получил формулу расчитывающую стоимость суток")
+        
+        # Находим элемент, в котором содержаться строки с условиями спец предложения    
+        #ul_element = browser.find_element("xpath", "//*[text()='Условия']/following-sibling::ul")
+        # Найти все теги <li> в найденном элементе <ul>
+        #li_elements = ul_element.find_elements("tag name", "li")
+        
+        wait = WebDriverWait(browser, 10)
+
+        #ul_element = wait.until(EC.presence_of_element_located((
+        #By.XPATH, "//*[starts-with(name(), 'h') and contains(normalize-space(.), 'Условия')]/following-sibling::ul[1]")))
+
+        #li_elements = ul_element.find_elements(By.TAG_NAME, "li")
+        
+        ul_element = wait.until(EC.presence_of_element_located((
+            By.XPATH,
+            "//*[starts-with(local-name(), 'h') and contains(normalize-space(.), 'Условия')]/following::ul[1]"
+        )))
+
+        li_elements = ul_element.find_elements(By.TAG_NAME, "li")
+
+        # Получаем текст каждого найденного элемента <li>, записывая его в переменную 's'
+        for li in li_elements:
+            s = li.text
+            # Добавляем строку в общий список
+            lines.append(s)
+            
+            # Если в строке нашлась категория, присваем ее переменной category
+            if get_category(s):
+                category = get_category(s)
+                print("Получил категории подходящие под спецпредложение")
+                
+            # Если в строке нашлись даты проживания, присваем их переменной living_dates
+            if get_living_dates(s):
+                living_dates = get_living_dates(s)
+                print("Извлек даты проживания")
+                # Если название оффера "ранее бронирование", форматируем даты под условия спецпредложения
+                if title.text == 'Раннее бронирование':
+                    living_dates = early_booking(living_dates)
+                    print(f"Отредактировал даты проживания под условия спец предложения 'Раннее бронирование'")
+                    
+            # Если в строке нашлись даты бронирования, присваем их переменной date_before
+            if extract_date_before(s):
+                date_before = extract_date_before(s)
+                print(f"Извлек даты бронирования")
+                
+            # Если в строке нашлась информация о суммировании скидок, присваиваем ее перемнной summ_offers
+            if analyze_offers(s):
+                summ_with_loyalty = analyze_offers(s)
+                print(f"Получил информацию о суммировании скидок")
+                
+        # Формируем единный строку со всей информацией о спецпредложении удаляя из нее не нужные боту строки
+        offer_text = '\n'.join(lines)
+        stop_phrase = ' только при обращении в единый контактный центр по номеру 8 800 550 52 71.'
+        offer_text = offer_text.replace(stop_phrase, '.')
+        print(f"Сформировал единный текст, описывающий спецпредложение")
+        
+        # Передаем весь текст в функцию, где нейросеть находит минимальное количество дней проживания по офферу
+        min_rest_days = get_min_days(offer_text)
+        print(f"Получил минимальное количество дней проживания, по спецпредложению")
+        
+        offer = {
+            "Название": title.text,  
+            "Категория": category,
+            "Даты проживания": living_dates,
+            "Даты бронирования": date_before,
+            "Формула расчета": formula,
+            "Минимальное количество дней": min_rest_days,
+            "Суммируется с программой лояльности": summ_with_loyalty,
+            "Текст предложения": offer_text
+        }
+        
+        return offer
+
+
+
+    
+
+
+        
