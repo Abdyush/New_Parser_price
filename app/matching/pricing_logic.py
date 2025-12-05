@@ -15,7 +15,7 @@ from .models import (
 
 
 def normalize_category(value: str) -> str:
-    return value.strip().lower().replace("‘'", "ç")
+    return value.strip().lower().replace("ё", "е")
 
 
 def match_categories_for_guest(guest: GuestRow, rooms: List[RoomRow]) -> List[str]:

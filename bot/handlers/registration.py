@@ -335,7 +335,7 @@ async def process_desired_price(message: Message, state: FSMContext):
     await state.update_data(desired_price_per_night=price)
 
     data = await state.get_data()
-    categories_titles = [CATEGORY_MAP.get(k, k) for k in data["preferred_categories"]]
+    categories_titles = [CATEGORY_MAP.get(k, k) for k in data.get("preferred_categories", [])]
 
     if data.get("editing_price"):
         with get_connection() as conn:
