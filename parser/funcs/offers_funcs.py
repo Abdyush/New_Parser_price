@@ -305,7 +305,7 @@ def collect_offer_data(browser):
             if extract_date_before(s):
                 date_before = extract_date_before(s)
                 print(f"Извлек даты бронирования")
-                
+                            
             # Если в строке нашлась информация о суммировании скидок, присваиваем ее перемнной summ_offers
             if analyze_offers(s):
                 summ_with_loyalty = analyze_offers(s)

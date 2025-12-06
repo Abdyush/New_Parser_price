@@ -1,0 +1,2 @@
+timestamp,worker_id,attempt,start_date,days,status,message
+2025-12-06T20:39:59.287844,4,1,2025-12-18,4,start,starting range 2025-12-18 -> 2025-12-21
