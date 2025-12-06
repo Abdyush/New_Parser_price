@@ -1,3 +1,4 @@
+import json
 import time
 import os
 import re
@@ -110,35 +111,39 @@ def get_category(string: str) -> Union[str, List[str], None]:
             return None     # Ничего не найдено, пропускаем строку
         
 
-# Функция ищет в строке даты проживания, определяемые специальным предложением        
-def get_living_dates(string: str) -> Union[List[List[str]], None]:
-    # Проверяем на наличие фразы о бронировании, если есть, занчит речь идет о датах бронироввания и нам не подходит
-    if "бронировани" in string.lower():
-        return None  # Если речь идет о бронировании, возвращаем None
+# Функция ищет в тексте даты проживания, определяемые специальным предложением 
+def get_living_dates_ai(text: str) -> str:
+    # Создаем соответствующий промт
+    promt = f'''Проанализируй текст спецпредложения и выдели все диапазоны дат проживания гостей.
+                Верни строго JSON-массив, где каждый элемент — массив из двух строк дат в формате ДД.ММ.ГГГГ, например: [["01.06.2024","10.06.2024"], ...].
+                Если дат проживания нет, верни [] без лишнего текста.
+                Текст: {text}'''
     
-    # Регулярное выражение для поиска дат
-    date_pattern = r"\d{2}\.\d{2}\.\d{4}"
-    # Ищем все даты в строке
-    dates = re.findall(date_pattern, string)
-    
-    if not dates:
-        return None  # Если дат нет, пропускаем строку
-    
-    # Определяем сегодняшнюю дату
-    today = datetime.today().strftime('%d.%m.%Y')
-    
-    if len(dates) == 2:                # Если нашлось две даты, определяем их как начало и конец
-        dates = [dates]
-    elif len(dates) == 1:              # Если одна, то за начало берем сегодняшнюю дату, так как веротяно, в строке была дата определяющая, крайний день приживания
-        dates = [[today, dates[0]]]
-    elif len(dates) > 2:               # Если больше двух, то ншлись периоды, добавляем их списками в список
-        dates = [list(date_pair) for date_pair in zip(dates[::2], dates[1::2])]
-    else:
-        return None                    # Если ничего не найдено, пропускаем строку
-    
-    # Возвращаем список дат проживания по спец предложению
-    return dates
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY")
+    )
 
+    # Вызываем метод create для создания завершения (completion) чата. Результат этого вызова сохраняется в переменной completion.
+    completion = client.chat.completions.create(
+        model="gpt-4.1",                                       # указываем модель
+        temperature=0.1,                                       # Параметр temperature контролирует степень случайности в ответах модели. Значение от 0 до 1. 
+        max_tokens=100,                                        # Указывает максимальное количество токенов (слов и символов), которые могут быть сгенерированы в ответе.
+        top_p=0,                                               # Параметр определяет диапазон разнообразия слов 
+        frequency_penalty=0,                                   # Параметр определяет частоту использования одних и тех же слов (нам нужен минимум)
+        presence_penalty=0,                                    # Параметр штрафует слова за то, что оно уже встречалось (нам нужен минимум)
+        messages = [{'role': 'system', 'content': promt}]      # Здесь задаются сообщения, которые передаются модели для контекста. 
+    )                                                          # В данном случае передается одно сообщение с ролью system, которое содержит текст из переменной promt
+    
+    # Функция возвращает ответ модели в виде текста
+    raw = completion.choices[0].message.content
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [pair for pair in data if isinstance(pair, (list, tuple)) and len(pair) == 2]
+    except Exception:
+        pass
+    return []
+        
 
 # Функция для спец предложения "Ранее бронирование", его суть в том, что скидка применяется если гость забронировал номер минимум за 60 суток до заезда
 # таким образом, мы форматируем даты проживания прибавляя 60 суток к сегодняшнему дню и определяя переменную -  начало периода спец предложения
@@ -148,38 +153,39 @@ def early_booking(living_dates: List[list[str]]) -> List[list[str]]:
     # Возвращаем обновленный список с датами 
     return living_dates
 
-
 # Функция проверяет есть ли в строке информация о датах возможного бронирования и возвращает период броинрования в виде списка
-# где первая дата это начало (сегодняшний день), а вторая - конец
-def extract_date_before(text: str) -> Union[List[List[str]], None]:
-    # Проверяем, есть ли в строке информация о проживании, если есть то это строка скорее всего содержит информацию о датах
-    # проживания а не о датах бронирования, в таком случае возвращаем None
-    if "проживани" in text.lower():
-        return None
+# где первая дата это начало (сегодняшний день), а вторая - конец 
+def extract_date_before_ai(text: str) -> str:
+    # Создаем соответствующий промт
+    promt = f'''Проанализируй текст спецпредложения и выдели все диапазоны дат бронирования (период, в который можно забронировать).
+                Верни строго JSON-массив, где каждый элемент — массив из двух строк дат в формате ДД.ММ.ГГГГ, например: [["01.05.2024","31.05.2024"], ...].
+                Если дат бронирования нет, верни [] без лишнего текста.
+                Текст: {text}'''
     
-    # Определяем регулярное выражение для поиска дат
-    date_pattern = r"\d{2}\.\d{2}\.\d{4}"
-    # Ищем все даты в строке
-    dates = re.findall(date_pattern, text)
-    # Если дат нет, пропускаем строку возвращая None
-    if not dates:
-        return None  
+    client = OpenAI(
+        api_key=os.environ.get("OPENAI_API_KEY")
+    )
+
+    # Вызываем метод create для создания завершения (completion) чата. Результат этого вызова сохраняется в переменной completion.
+    completion = client.chat.completions.create(
+        model="gpt-4.1",                                       # указываем модель
+        temperature=0.1,                                       # Параметр temperature контролирует степень случайности в ответах модели. Значение от 0 до 1. 
+        max_tokens=100,                                        # Указывает максимальное количество токенов (слов и символов), которые могут быть сгенерированы в ответе.
+        top_p=0,                                               # Параметр определяет диапазон разнообразия слов 
+        frequency_penalty=0,                                   # Параметр определяет частоту использования одних и тех же слов (нам нужен минимум)
+        presence_penalty=0,                                    # Параметр штрафует слова за то, что оно уже встречалось (нам нужен минимум)
+        messages = [{'role': 'system', 'content': promt}]      # Здесь задаются сообщения, которые передаются модели для контекста. 
+    )                                                          # В данном случае передается одно сообщение с ролью system, которое содержит текст из переменной promt
     
-    # Определяем сегодняшнюю дату
-    today = datetime.today().strftime('%d.%m.%Y')
-    # TODO: оптимизировать проверку
-    # Если в строке есть слово бронирование и содержатся даты, значит вероятнее всего это нужная строка
-    if "бронировани" in text.lower():
-        # Если есть две даты, определяем их как начало и конец
-        if len(dates) == 2:
-            dates = [tuple(dates)]
-        elif len(dates) == 1:
-            dates = [(today, dates[0])]
-        else:
-            return None  # Если ничего не найдено, пропускаем строку
-        
-    # Возвращаем 
-    return dates
+    # Функция возвращает ответ модели в виде текста
+    raw = completion.choices[0].message.content
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [pair for pair in data if isinstance(pair, (list, tuple)) and len(pair) == 2]
+    except Exception:
+        pass
+    return []
 
 
 # Функция определяет суммируется ли специальное предложение с программой лояльности или другими спец предложениями
@@ -261,19 +267,9 @@ def collect_offer_data(browser):
         # С помощью функции получаем формулу расчитывающую стоимость суток
         formula = get_formula(core.text)
         print(f"Получил формулу расчитывающую стоимость суток")
-        
-        # Находим элемент, в котором содержаться строки с условиями спец предложения    
-        #ul_element = browser.find_element("xpath", "//*[text()='Условия']/following-sibling::ul")
-        # Найти все теги <li> в найденном элементе <ul>
-        #li_elements = ul_element.find_elements("tag name", "li")
-        
+             
         wait = WebDriverWait(browser, 10)
 
-        #ul_element = wait.until(EC.presence_of_element_located((
-        #By.XPATH, "//*[starts-with(name(), 'h') and contains(normalize-space(.), 'Условия')]/following-sibling::ul[1]")))
-
-        #li_elements = ul_element.find_elements(By.TAG_NAME, "li")
-        
         ul_element = wait.until(EC.presence_of_element_located((
             By.XPATH,
             "//*[starts-with(local-name(), 'h') and contains(normalize-space(.), 'Условия')]/following::ul[1]"
@@ -291,21 +287,7 @@ def collect_offer_data(browser):
             if get_category(s):
                 category = get_category(s)
                 print("Получил категории подходящие под спецпредложение")
-                
-            # Если в строке нашлись даты проживания, присваем их переменной living_dates
-            if get_living_dates(s):
-                living_dates = get_living_dates(s)
-                print("Извлек даты проживания")
-                # Если название оффера "ранее бронирование", форматируем даты под условия спецпредложения
-                if title.text == 'Раннее бронирование':
-                    living_dates = early_booking(living_dates)
-                    print(f"Отредактировал даты проживания под условия спец предложения 'Раннее бронирование'")
-                    
-            # Если в строке нашлись даты бронирования, присваем их переменной date_before
-            if extract_date_before(s):
-                date_before = extract_date_before(s)
-                print(f"Извлек даты бронирования")
-                            
+                                
             # Если в строке нашлась информация о суммировании скидок, присваиваем ее перемнной summ_offers
             if analyze_offers(s):
                 summ_with_loyalty = analyze_offers(s)
@@ -321,6 +303,16 @@ def collect_offer_data(browser):
         min_rest_days = get_min_days(offer_text)
         print(f"Получил минимальное количество дней проживания, по спецпредложению")
         
+        living_dates = get_living_dates_ai(offer_text)
+        print("Извлек даты проживания")
+        # Если название оффера "ранее бронирование", форматируем даты под условия спецпредложения
+        if title.text == 'Раннее бронирование':
+            living_dates = early_booking(living_dates)
+            print(f"Отредактировал даты проживания под условия спец предложения 'Раннее бронирование'")
+            
+        date_before = extract_date_before_ai(offer_text)
+        print(f"Извлек даты бронирования")
+                   
         offer = {
             "Название": title.text,  
             "Категория": category,
@@ -333,7 +325,6 @@ def collect_offer_data(browser):
         }
         
         return offer
-
 
 
     
