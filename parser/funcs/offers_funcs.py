@@ -17,7 +17,7 @@ def find_offer_cards(browser):
     try:
         alert = browser.find_element(By.XPATH, "//div[@class='popup--content' and @data-notification='alert']//button[contains(@class, 'button-primary')]")
         alert.click()
-        print('На старнице обнаружен алерт и успешно закрыт')
+        print('На странице обнаружен алерт и успешно закрыт')
     except:
         print('Алерт на странице не обнаружен')
         

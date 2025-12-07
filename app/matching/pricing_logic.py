@@ -200,7 +200,22 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
     if not stays:
         return []
 
-    stays_sorted = sorted(stays, key=lambda s: (s.guest_id, s.category, s.stay_date))
+    stays_sorted = sorted(
+        stays,
+        key=lambda s: (
+            s.guest_id,
+            s.category,
+            s.applied_special_offer,
+            s.applied_loyalty,
+            s.formula_used,
+            s.regular_breakfast_price,
+            s.new_breakfast_price,
+            s.regular_full_pansion_price,
+            s.new_full_pansion_price,
+            s.is_last_room,
+            s.stay_date,
+        ),
+    )
 
     result: List[AggregatedRow] = []
 
@@ -209,9 +224,7 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
     prev_date = current.stay_date
 
     def make_period_str(start: date, end: date) -> str:
-        if start == end:
-            return start.isoformat()
-        return f"{start.isoformat()}..{end.isoformat()}"
+        return f"{start.isoformat()}-{end.isoformat()}"
 
     def push_agg(stay: PricedStay, start: date, end: date):
         result.append(

@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import sys
 import traceback
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from multiprocessing import Process
 
@@ -21,12 +22,13 @@ from parser.funcs.common_funcs import create_browser_options
 WORKER_COUNT = 4
 CHUNK_DAYS = 4
 MAX_ATTEMPTS = 3
+CSV_ENCODING = "utf-8-sig"
 
 
 def log_to_csv(csv_path, worker_id, attempt, start_date, days, status, message):
     """Append a single log line to the per-worker csv."""
     timestamp = datetime.now().isoformat()
-    with open(csv_path, mode="a", newline="") as f:
+    with open(csv_path, mode="a", newline="", encoding=CSV_ENCODING) as f:
         writer = csv.writer(f)
         writer.writerow(
             [
@@ -41,34 +43,81 @@ def log_to_csv(csv_path, worker_id, attempt, start_date, days, status, message):
         )
 
 
+class CsvPrintLogger:
+    """Mirror stdout while appending each printed line to the CSV log."""
+
+    def __init__(self, csv_path, worker_id, attempt, start_date, days, original_stdout):
+        self.csv_path = csv_path
+        self.worker_id = worker_id
+        self.attempt = attempt
+        self.start_date = start_date
+        self.days = days
+        self._buffer = ""
+        self._original_stdout = original_stdout
+
+    def write(self, data):
+        self._original_stdout.write(data)
+        self._original_stdout.flush()
+        self._buffer += data
+        self._flush_buffer_lines()
+
+    def flush(self):
+        self._original_stdout.flush()
+        self._flush_buffer_lines(flush_remaining=True)
+
+    def _flush_buffer_lines(self, flush_remaining=False):
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            line = line.strip()
+            if line:
+                log_to_csv(
+                    self.csv_path,
+                    self.worker_id,
+                    self.attempt,
+                    self.start_date,
+                    self.days,
+                    "print",
+                    line,
+                )
+        if flush_remaining and self._buffer.strip():
+            log_to_csv(
+                self.csv_path,
+                self.worker_id,
+                self.attempt,
+                self.start_date,
+                self.days,
+                "print",
+                self._buffer.strip(),
+            )
+            self._buffer = ""
+
+
+@contextmanager
+def capture_prints_to_csv(csv_path, worker_id, attempt, start_date, days):
+    """Redirect stdout to also log print lines into CSV."""
+    original_stdout = sys.stdout
+    logger = CsvPrintLogger(
+        csv_path, worker_id, attempt, start_date, days, original_stdout
+    )
+    sys.stdout = logger
+    try:
+        yield
+    finally:
+        logger.flush()
+        sys.stdout = original_stdout
+
+
 def run_parser(worker_id, attempt, start_date, days, csv_path):
     """Run parsing for a date range; exceptions bubble up to allow retries."""
     start_str = start_date.isoformat()
     end_str = (start_date + timedelta(days=days - 1)).isoformat()
-    print(
-        f"[parser-{worker_id}] attempt {attempt}: starting range {start_str} -> {end_str}"
-    )
-    log_to_csv(
-        csv_path,
-        worker_id,
-        attempt,
-        start_date,
-        days,
-        "start",
-        f"starting range {start_str} -> {end_str}",
-    )
-
-    try:
-        options = create_browser_options()
-        with get_connection() as conn:
-            repo = PostgresPriceRepository(conn)
-            with webdriver.Chrome(options=options) as browser:
-                gateway = SeleniumHotelGateway(browser)
-                service = PriceParsingService(repo, gateway)
-                service.parse_period(start_date, days)
+    with capture_prints_to_csv(csv_path, worker_id, attempt, start_date, days):
+        def progress_callback(done, total):
+            percent = int(done / total * 100)
+            print(f"[parser-{worker_id}] progress {done}/{total} ({percent}%)")
 
         print(
-            f"[parser-{worker_id}] attempt {attempt}: finished range {start_str} -> {end_str}"
+            f"[parser-{worker_id}] attempt {attempt}: starting range {start_str} -> {end_str}"
         )
         log_to_csv(
             csv_path,
@@ -76,24 +125,46 @@ def run_parser(worker_id, attempt, start_date, days, csv_path):
             attempt,
             start_date,
             days,
-            "success",
-            f"completed range {start_str} -> {end_str}",
+            "start",
+            f"starting range {start_str} -> {end_str}",
         )
-    except Exception:
-        error_msg = traceback.format_exc()
-        print(
-            f"[parser-{worker_id}] attempt {attempt}: failed on range {start_str} -> {end_str}\n{error_msg}"
-        )
-        log_to_csv(
-            csv_path,
-            worker_id,
-            attempt,
-            start_date,
-            days,
-            "error",
-            error_msg,
-        )
-        raise
+
+        try:
+            options = create_browser_options()
+            with get_connection() as conn:
+                repo = PostgresPriceRepository(conn)
+                with webdriver.Chrome(options=options) as browser:
+                    gateway = SeleniumHotelGateway(browser)
+                    service = PriceParsingService(repo, gateway)
+                    service.parse_period(start_date, days, progress_callback)
+
+            print(
+                f"[parser-{worker_id}] attempt {attempt}: finished range {start_str} -> {end_str}"
+            )
+            log_to_csv(
+                csv_path,
+                worker_id,
+                attempt,
+                start_date,
+                days,
+                "success",
+                f"completed range {start_str} -> {end_str}",
+            )
+        except Exception:
+            error_msg = traceback.format_exc()
+            print(
+                f"[parser-{worker_id}] attempt {attempt}: failed on range {start_str} -> {end_str}\n{error_msg}"
+            )
+            log_to_csv(
+                csv_path,
+                worker_id,
+                attempt,
+                start_date,
+                days,
+                "error",
+                error_msg,
+            )
+            raise
 
 
 def start_worker(worker_id, attempt, start_date, days, csv_path) -> Process:
@@ -133,7 +204,7 @@ if __name__ == "__main__":
     for worker_id, chunk_start, chunk_days in chunks:
         csv_path = os.path.join(ROOT, f"parser_worker_{worker_id}.csv")
         csv_paths[worker_id] = csv_path
-        with open(csv_path, mode="w", newline="") as f:
+        with open(csv_path, mode="w", newline="", encoding=CSV_ENCODING) as f:
             writer = csv.writer(f)
             writer.writerow(
                 ["timestamp", "worker_id", "attempt", "start_date", "days", "status", "message"]

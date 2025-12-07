@@ -29,20 +29,48 @@ class SeleniumHotelGateway(HotelSiteGateway):
         
         time.sleep(4)
 
-        categories = find_categories(self.browser)
-        count_available_categories = len(categories)
+        categories = []
+        count_available_categories = 0
+        for attempt in range(4):
+            categories = find_categories(self.browser)
+            count_available_categories = len(categories)
+            if count_available_categories > 0:
+                break
+            if attempt < 3:
+                print(f"[trace] категории не загрузились, пробуем снова ({attempt + 2}/4)")
+                time.sleep(4)
         print(f'На {dt.strftime("%d.%m.%Y")} найдено: {count_available_categories} доступных категорий')
         results = []
 
         for i in range(count_available_categories):
             time.sleep(3)
-            try:
-                cat_element = categories[i]
-                self.browser.execute_script("arguments[0].scrollIntoView(true);", cat_element)
-                WebDriverWait(self.browser, 10).until(EC.element_to_be_clickable(cat_element))
-                print(f'Выбрал {i+1} категорию из {count_available_categories} найденных')
-            except:
-                print(f'{i+1} категория из списка недоступна')
+            cat_element = None
+            for attempt in range(4):
+                if attempt > 0:
+                    time.sleep(4)
+                    categories = find_categories(self.browser)
+
+                if i >= len(categories):
+                    if attempt < 3:
+                        print(f"[trace] категория {i+1} пока не появилась, пробуем снова ({attempt + 1}/4)")
+                        continue
+                    print(f'{i+1} категория из списка недоступна')
+                    break
+
+                try:
+                    cat_element = categories[i]
+                    self.browser.execute_script("arguments[0].scrollIntoView(true);", cat_element)
+                    WebDriverWait(self.browser, 10).until(EC.element_to_be_clickable(cat_element))
+                    print(f'Выбрал {i+1} категорию из {count_available_categories} найденных')
+                    break
+                except Exception:
+                    if attempt < 3:
+                        print(f'{i+1} категория из списка недоступна, повторяем ({attempt + 2}/4)')
+                        continue
+                    print(f'{i+1} категория из списка недоступна')
+                    break
+
+            if not cat_element:
                 continue
         
             last_room = check_last_room(cat_element)
