@@ -147,72 +147,138 @@ def build_priced_stays_for_guest(
     today: date,
 ) -> List[PricedStay]:
     stays: List[PricedStay] = []
+    grouped = group_regular_prices(matched_prices)
 
-    for rp in matched_prices:
-        applicable_offer: Optional[SpecialOfferData] = None
-        for off in offers:
-            if not offer_matches_category(off, rp.category):
-                continue
-            if not offer_matches_stay_date(off, periods_map, rp.date):
-                continue
-            if not offer_matches_booking_date(off, today):
-                continue
-            applicable_offer = off
-            break
+    for block in grouped:
+        period_len = (block["end_date"] - block["start_date"]).days + 1
+        for dt in block["dates"]:
+            applicable_offer: Optional[SpecialOfferData] = None
+            for off in offers:
+                min_days_ok = (off.min_days or 0) <= period_len
+                if not min_days_ok:
+                    continue
+                if not offer_matches_category(off, block["category"]):
+                    continue
+                if not offer_matches_stay_date(off, periods_map, dt):
+                    continue
+                if not offer_matches_booking_date(off, today):
+                    continue
+                applicable_offer = off
+                break
 
-        new_breakfast, offer_id_bf, loyalty_bf, formula_used = calc_price_with_discounts(
-            base_price=rp.only_breakfast,
-            guest_loyalty=guest.loyalty_status,
-            loyalty_discounts=loyalty_discounts,
-            offer=applicable_offer,
-        )
-
-        new_full, offer_id_fp, loyalty_fp, _ = calc_price_with_discounts(
-            base_price=rp.full_pansion,
-            guest_loyalty=guest.loyalty_status,
-            loyalty_discounts=loyalty_discounts,
-            offer=applicable_offer,
-        )
-
-        applied_offer_id = offer_id_bf or offer_id_fp
-        applied_loyalty = loyalty_bf or loyalty_fp
-
-        stays.append(
-            PricedStay(
-                guest_id=guest.id,
-                category=str(rp.category),
-                stay_date=rp.date,
-                regular_breakfast_price=rp.only_breakfast,
-                new_breakfast_price=new_breakfast,
-                regular_full_pansion_price=rp.full_pansion,
-                new_full_pansion_price=new_full,
-                applied_special_offer=applied_offer_id,
-                applied_loyalty=applied_loyalty,
-                formula_used=formula_used,
-                is_last_room=rp.is_last_room,
+            new_breakfast, offer_id_bf, loyalty_bf, formula_used = calc_price_with_discounts(
+                base_price=block["only_breakfast"],
+                guest_loyalty=guest.loyalty_status,
+                loyalty_discounts=loyalty_discounts,
+                offer=applicable_offer,
             )
-        )
+
+            new_full, offer_id_fp, loyalty_fp, _ = calc_price_with_discounts(
+                base_price=block["full_pansion"],
+                guest_loyalty=guest.loyalty_status,
+                loyalty_discounts=loyalty_discounts,
+                offer=applicable_offer,
+            )
+
+            applied_offer_id = offer_id_bf or offer_id_fp
+            applied_loyalty = loyalty_bf or loyalty_fp
+
+            stays.append(
+                PricedStay(
+                    guest_id=guest.id,
+                    category=str(block["category"]),
+                    stay_date=dt,
+                    regular_breakfast_price=block["only_breakfast"],
+                    new_breakfast_price=new_breakfast,
+                    regular_full_pansion_price=block["full_pansion"],
+                    new_full_pansion_price=new_full,
+                    applied_special_offer=applied_offer_id,
+                    applied_loyalty=applied_loyalty,
+                    formula_used=formula_used,
+                    is_last_room=dt in block["last_room_dates"],
+                )
+            )
 
     return stays
+
+
+def group_regular_prices(prices: List[RegularPrice]) -> List[Dict]:
+    """Group regular prices by category and price values, ignoring is_last_room, with consecutive dates."""
+    if not prices:
+        return []
+
+    sorted_prices = sorted(
+        prices,
+        key=lambda p: (p.category, p.only_breakfast, p.full_pansion, p.date),
+    )
+
+    groups: List[Dict] = []
+
+    current = sorted_prices[0]
+    start_date = current.date
+    prev_date = current.date
+    last_room_dates = [current.date] if current.is_last_room else []
+    dates = [current.date]
+
+    def push_group():
+        groups.append(
+            {
+                "category": current.category,
+                "only_breakfast": current.only_breakfast,
+                "full_pansion": current.full_pansion,
+                "start_date": start_date,
+                "end_date": prev_date,
+                "dates": list(dates),
+                "last_room_dates": list(last_room_dates),
+            }
+        )
+
+    for p in sorted_prices[1:]:
+        same_key = (
+            p.category == current.category
+            and p.only_breakfast == current.only_breakfast
+            and p.full_pansion == current.full_pansion
+        )
+        is_next_day = (p.date == prev_date + timedelta(days=1))
+
+        if same_key and is_next_day:
+            prev_date = p.date
+            current = p
+            dates.append(p.date)
+            if p.is_last_room:
+                last_room_dates.append(p.date)
+        else:
+            push_group()
+            current = p
+            start_date = p.date
+            prev_date = p.date
+            dates = [p.date]
+            last_room_dates = [p.date] if p.is_last_room else []
+
+    push_group()
+
+    return groups
 
 
 def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
     if not stays:
         return []
 
+    def none_safe(val):
+        return val if val is not None else ""
+
     stays_sorted = sorted(
         stays,
         key=lambda s: (
             s.guest_id,
-            s.category,
-            s.applied_special_offer,
-            s.applied_loyalty,
-            s.formula_used,
+            none_safe(s.category),
+            none_safe(str(s.applied_special_offer)),
+            none_safe(s.applied_loyalty),
+            none_safe(s.formula_used),
             s.regular_breakfast_price,
             s.new_breakfast_price,
             s.regular_full_pansion_price,
             s.new_full_pansion_price,
-            s.is_last_room,
             s.stay_date,
         ),
     )
@@ -222,11 +288,12 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
     current = stays_sorted[0]
     start_date = current.stay_date
     prev_date = current.stay_date
+    last_room_dates = [current.stay_date] if current.is_last_room else []
 
     def make_period_str(start: date, end: date) -> str:
         return f"{start.isoformat()}-{end.isoformat()}"
 
-    def push_agg(stay: PricedStay, start: date, end: date):
+    def push_agg(stay: PricedStay, start: date, end: date, last_room_dates_block: List[date]):
         result.append(
             AggregatedRow(
                 guest_id=stay.guest_id,
@@ -239,7 +306,7 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
                 applied_special_offer=stay.applied_special_offer,
                 applied_loyalty=stay.applied_loyalty,
                 formula_used=stay.formula_used,
-                is_last_room=stay.is_last_room,
+                is_last_room=",".join(sorted({d.isoformat() for d in last_room_dates_block})),
             )
         )
 
@@ -254,7 +321,6 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
             and s.applied_special_offer == current.applied_special_offer
             and s.applied_loyalty == current.applied_loyalty
             and s.formula_used == current.formula_used
-            and s.is_last_room == current.is_last_room
         )
 
         is_next_day = (s.stay_date == prev_date + timedelta(days=1))
@@ -262,12 +328,15 @@ def group_stays_into_periods(stays: List[PricedStay]) -> List[AggregatedRow]:
         if same_key and is_next_day:
             prev_date = s.stay_date
             current = s
+            if s.is_last_room:
+                last_room_dates.append(s.stay_date)
         else:
-            push_agg(current, start_date, prev_date)
+            push_agg(current, start_date, prev_date, last_room_dates)
             current = s
             start_date = s.stay_date
             prev_date = s.stay_date
+            last_room_dates = [s.stay_date] if s.is_last_room else []
 
-    push_agg(current, start_date, prev_date)
+    push_agg(current, start_date, prev_date, last_room_dates)
 
     return result

@@ -28,6 +28,7 @@ class SpecialOfferData:
     id: UUID
     categories: List[str]
     formula: Optional[str]
+    min_days: Optional[int]
     loyalty_compatible: bool
     booking_start: Optional[date]
     booking_end: Optional[date]
@@ -67,4 +68,4 @@ class AggregatedRow:
     applied_special_offer: Optional[UUID]
     applied_loyalty: Optional[str]
     formula_used: Optional[str]
-    is_last_room: bool
+    is_last_room: str

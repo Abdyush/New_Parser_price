@@ -86,7 +86,7 @@ def fetch_special_offers(conn: connection) -> List[SpecialOfferData]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, categories, formula, loyalty_compatible, booking_start, booking_end
+            SELECT id, categories, formula, min_days, loyalty_compatible, booking_start, booking_end
             FROM special_offers
             """
         )
@@ -94,12 +94,13 @@ def fetch_special_offers(conn: connection) -> List[SpecialOfferData]:
 
     offers: List[SpecialOfferData] = []
     for r in rows:
-        offer_id, categories, formula, compatible, b_start, b_end = r
+        offer_id, categories, formula, min_days, compatible, b_start, b_end = r
         offers.append(
             SpecialOfferData(
                 id=offer_id,
                 categories=categories or [],
                 formula=formula,
+                min_days=min_days,
                 loyalty_compatible=bool(compatible),
                 booking_start=b_start,
                 booking_end=b_end,
