@@ -7,5 +7,6 @@ def main_menu_keyboard():
         [InlineKeyboardButton(text="Мои категории 🏨", callback_data="edit_categories")],
         [InlineKeyboardButton(text="Изменить цену 💰", callback_data="edit_price")],
         [InlineKeyboardButton(text="Изменить статус ⭐", callback_data="edit_status")],
+        [InlineKeyboardButton(text="Доступные номера", callback_data="show_available")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)

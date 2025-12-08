@@ -1,10 +1,10 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import List
 
-from app.notifications.service import GuestPriceNotification
+from app.notifications.service import CategoryNotification
 
 
-def notifications_keyboard(guest_id: int, offers: List[GuestPriceNotification]) -> InlineKeyboardMarkup:
+def notifications_keyboard(guest_id: int, offers: List[CategoryNotification]) -> InlineKeyboardMarkup:
     """
     Клавиатура со списком категорий:
     на кнопке: только сокращённое имя категории
@@ -14,27 +14,20 @@ def notifications_keyboard(guest_id: int, offers: List[GuestPriceNotification]) 
     buttons = []
 
     # Сортируем предложения по цене (мин. доступной), пустые цены в конец
-    def _price(o: GuestPriceNotification):
-        return (
-            o.new_breakfast_price
-            if o.new_breakfast_price is not None
-            else o.new_full_pansion_price
-            if o.new_full_pansion_price is not None
-            else float("inf")
-        )
+    def _price(cat: CategoryNotification):
+        best = float("inf")
+        for item in cat.items:
+            for val in (item.new_breakfast_price, item.new_full_pansion_price):
+                if val is not None:
+                    best = min(best, val)
+        return best
 
-    for offer in sorted(offers, key=_price):
-        # Берём главную цену (приоритет — с завтраком)
-        price = offer.new_breakfast_price or offer.new_full_pansion_price
-
-        # Сокращаем название категории до текста перед первой скобкой
+    for idx, offer in enumerate(sorted(offers, key=_price)):
         category_short = offer.category.split("(", 1)[0].strip() if offer.category else "Категория"
-
-        # Кнопка только с названием категории (остальные детали показываем после клика)
         text = category_short
 
         buttons.append(
-            [InlineKeyboardButton(text=text, callback_data=f"n_it_{offer.id}")]
+            [InlineKeyboardButton(text=text, callback_data=f"n_it_{offer.items[0].guest_id}_{idx}")]
         )
 
     # Кнопка подтверждения
@@ -45,7 +38,7 @@ def notifications_keyboard(guest_id: int, offers: List[GuestPriceNotification]) 
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def notification_details_keyboard(offer: GuestPriceNotification) -> InlineKeyboardMarkup:
+def notification_details_keyboard(guest_id: int) -> InlineKeyboardMarkup:
     """
     Кнопки под деталями:
     1) Назад к категориям
@@ -56,7 +49,7 @@ def notification_details_keyboard(offer: GuestPriceNotification) -> InlineKeyboa
             [
                 InlineKeyboardButton(
                     text="← Назад к категориям",
-                    callback_data=f"n_back_{offer.guest_id}"
+                    callback_data=f"n_back_{guest_id}"
                 )
             ],
             [
