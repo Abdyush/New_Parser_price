@@ -41,7 +41,7 @@ def build_redis_storage() -> RedisStorage:
     """Создаёт RedisStorage из переменных окружения."""
     auth_part = f":{REDIS_PASSWORD}@" if REDIS_PASSWORD else ""
     url = f"redis://{auth_part}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-мут    return RedisStorage.from_url(url, state_ttl=None, data_ttl=None)
+    return RedisStorage.from_url(url, state_ttl=None, data_ttl=None)
 
 
 async def main():
