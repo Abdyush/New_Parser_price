@@ -15,11 +15,20 @@ from .models import (
 
 
 def normalize_category(value: str) -> str:
-    return value.strip().lower().replace("ё", "е")
-
+    """Simplified category normalization for matching."""
+    cleaned = (
+        value.replace('{', '')
+        .replace('}', '')
+        .replace('\"', '')
+        .replace('\u2019', "'")
+        .replace('\u2018', "'")
+        .strip()
+        .lower()
+    )
+    return cleaned
 
 def match_categories_for_guest(guest: GuestRow, rooms: List[RoomRow]) -> List[str]:
-    preferred = [normalize_category(p) for p in guest.preferred_categories]
+    preferred = [normalize_category(p) for p in (guest.preferred_categories or []) if p]
     total_people = guest.adults + guest.teens
 
     matched: List[str] = []
@@ -27,18 +36,14 @@ def match_categories_for_guest(guest: GuestRow, rooms: List[RoomRow]) -> List[st
     for room in rooms:
         room_name_lower = normalize_category(room.category_name)
 
-        fits_preference = False
+        # If no preferences provided, accept all categories that fit capacity.
+        fits_preference = not preferred
 
         for pref in preferred:
-            if pref == "вилла":
-                if "вилла" in room_name_lower:
-                    fits_preference = True
-            elif "имение сегуна" in pref or "сегуна" in pref:
-                if "имение сегуна" in room_name_lower or "сегуна" in room_name_lower:
-                    fits_preference = True
-            else:
-                if pref == room_name_lower:
-                    fits_preference = True
+            # Loose matching: substring containment either direction.
+            if pref in room_name_lower or room_name_lower in pref:
+                fits_preference = True
+                break
 
         if not fits_preference:
             continue
@@ -49,7 +54,6 @@ def match_categories_for_guest(guest: GuestRow, rooms: List[RoomRow]) -> List[st
         matched.append(room.category_name)
 
     return matched
-
 
 def offer_matches_category(offer: SpecialOfferData, room_category: str) -> bool:
     cats = offer.categories or []

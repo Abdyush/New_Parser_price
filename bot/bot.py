@@ -5,7 +5,7 @@ import asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from dotenv import load_dotenv
 
@@ -20,6 +20,10 @@ from bot.handlers import notifications as notifications_handlers
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
 
 
 async def on_startup(bot: Bot):
@@ -33,18 +37,29 @@ async def on_startup(bot: Bot):
     print("Bot commands installed")
 
 
+def build_redis_storage() -> RedisStorage:
+    """Создаёт RedisStorage из переменных окружения."""
+    auth_part = f":{REDIS_PASSWORD}@" if REDIS_PASSWORD else ""
+    url = f"redis://{auth_part}{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
+мут    return RedisStorage.from_url(url, state_ttl=None, data_ttl=None)
+
+
 async def main():
-    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    storage = build_redis_storage()
+    async with Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+        dp = Dispatcher(storage=storage)
+        dp.include_router(registration_router)
+        dp.include_router(profile_router)
+        dp.include_router(notifications_handlers.router)
 
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.include_router(registration_router)
-    dp.include_router(profile_router)
-    dp.include_router(notifications_handlers.router)
+        await on_startup(bot)
 
-    await on_startup(bot)
-
-    print("Bot is running...")
-    await dp.start_polling(bot)
+        print("Bot is running...")
+        try:
+            await dp.start_polling(bot)
+        finally:
+            await storage.close()
+            await storage.wait_closed()
 
 
 if __name__ == "__main__":

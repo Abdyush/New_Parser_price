@@ -7,6 +7,7 @@ from app.notifications.service import (
     CategoryNotification,
     load_offers_for_guest,
     filter_offers_by_preferences,
+    load_parser_status,
 )
 from app.notifications.notifier import send_notifications
 from bot.keyboards.notifications_kb import (
@@ -76,6 +77,7 @@ def _format_last_rooms(value) -> str | None:
 
 
 async def _send_user_offers(bot, chat_id: int, user_id: int):
+    parser_status = None
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute(
@@ -90,12 +92,19 @@ async def _send_user_offers(bot, chat_id: int, user_id: int):
 
         guest_id, first_name = row
         offers = filter_offers_by_preferences(conn, guest_id, load_offers_for_guest(conn, guest_id))
+        parser_status = load_parser_status(conn)
 
     if not offers:
         await bot.send_message(chat_id, "На данный момент, в отеле нет номеров удовлетворяющих Вашим требованиям")
         return
 
-    text = (
+    warning = ""
+    if parser_status and parser_status.status != "ok":
+        failed_at = _format_date_str(parser_status.failed_at.isoformat()) if parser_status.failed_at else "неизвестной дате"
+        warn_msg = parser_status.message or f"Парсер собрал не все данные, сломался на дате {failed_at}."
+        warning = f"⚠️ {warn_msg}\n\n"
+
+    text = warning + (
         f"Здравствуйте, {first_name}!\n\n"
         "Ниже подборка категорий, подходящих под ваши параметры. "
         "Выберите вариант, чтобы посмотреть детали."

@@ -1,7 +1,11 @@
 from dataclasses import dataclass
+from datetime import date
 from typing import List, Optional
 
 from psycopg2.extensions import connection
+from psycopg2.errors import UndefinedTable
+
+from app.matching.pricing_logic import normalize_category
 
 
 @dataclass
@@ -30,6 +34,14 @@ class CategoryNotification:
     items: List[GuestPriceNotification]
 
 
+@dataclass
+class ParserStatus:
+    status: str
+    last_completed_date: Optional[date]
+    failed_at: Optional[date]
+    message: Optional[str]
+
+
 def filter_offers_by_preferences(conn: connection, guest_id: int, offers: List[CategoryNotification]) -> List[CategoryNotification]:
     """
     Оставляем только категории, которые соответствуют предпочтениям гостя.
@@ -41,14 +53,14 @@ def filter_offers_by_preferences(conn: connection, guest_id: int, offers: List[C
     if not row or not row[0]:
         return offers
 
-    prefs = [str(p).strip().lower() for p in row[0] if p]
+    prefs = [normalize_category(str(p)) for p in row[0] if p]
     if not prefs:
         return offers
 
     filtered: List[CategoryNotification] = []
     for cat in offers:
-        cat_norm = (cat.category or "").lower()
-        if any(pref in cat_norm for pref in prefs):
+        cat_norm = normalize_category(cat.category or "")
+        if any(pref in cat_norm or cat_norm in pref for pref in prefs):
             filtered.append(cat)
 
     return filtered
@@ -213,3 +225,33 @@ def load_single_offer(conn: connection, guest_id: int, category: str) -> Optiona
         )
 
     return CategoryNotification(category=category, items=items)
+
+
+def load_parser_status(conn: connection) -> Optional[ParserStatus]:
+    """Возвращает статус последнего прогона парсера цен, если таблица доступна."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT status, last_completed_date, failed_at, message
+            FROM price_parser_status
+            WHERE id = 1
+            """
+        )
+    except UndefinedTable:
+        conn.rollback()
+        return None
+    except Exception:
+        conn.rollback()
+        return None
+
+    row = cur.fetchone()
+    if not row:
+        return None
+
+    return ParserStatus(
+        status=row[0],
+        last_completed_date=row[1],
+        failed_at=row[2],
+        message=row[3],
+    )
