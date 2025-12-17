@@ -133,7 +133,7 @@ def calc_price_with_discounts(
     final_price = price_after_offer
     if guest_loyalty:
         status_norm = guest_loyalty.strip().lower()
-        discount_percent = loyalty_discounts.get(status_norm)
+        discount_percent = None if status_norm == "none" else loyalty_discounts.get(status_norm)
         if discount_percent:
             if (not offer) or offer.loyalty_compatible:
                 final_price = int(round(price_after_offer * (100 - discount_percent) / 100))

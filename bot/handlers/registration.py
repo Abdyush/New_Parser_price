@@ -16,6 +16,20 @@ from infrastructure.db.common_db import get_connection
 from bot.keyboards.main_menu_kb import main_menu_keyboard
 
 
+def _normalize_loyalty_status(status: str | None) -> LoyaltyStatus:
+    """
+    Normalize incoming status string; treat missing/None as baseline without discount.
+    """
+    if not status:
+        return LoyaltyStatus.WHITE
+
+    status_clean = status.strip().lower()
+    if status_clean == "none":
+        return LoyaltyStatus.WHITE
+
+    return LoyaltyStatus(status_clean)
+
+
 def _categories_text(selected: list[str], editing: bool) -> str:
     """Формирует текст с выбранными категориями."""
     pretty = "\n".join(f"• {CATEGORY_MAP.get(c, c)}" for c in selected) or "• Пока ничего не выбрано"
@@ -301,7 +315,7 @@ async def loyalty_done(call: CallbackQuery, state: FSMContext):
                 await call.answer()
                 return
 
-            guest.loyalty_status = LoyaltyStatus(status.lower())
+            guest.loyalty_status = _normalize_loyalty_status(status)
             repo.save_guest(guest)
 
         await call.message.answer(
@@ -371,7 +385,7 @@ async def process_desired_price(message: Message, state: FSMContext):
         teens=data["teens"],
         infant=data["infant"],
         preferred_categories=categories_titles,
-        loyalty_status=LoyaltyStatus(data["loyalty_status"].lower()),
+        loyalty_status=_normalize_loyalty_status(data["loyalty_status"]),
         desired_price_per_night=data["desired_price_per_night"],
         created_at=datetime.now()
     )

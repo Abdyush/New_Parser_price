@@ -1,3 +1,9 @@
 tables/
 venv/
 .env
+backup.sql
+.vscode
+parser_worker_1.csv
+parser_worker_2.csv
+parser_worker_3.csv
+parser_worker_4.csv

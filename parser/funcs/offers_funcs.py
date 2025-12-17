@@ -48,6 +48,11 @@ def click_offer_card(browser, index):
     browser.execute_script("return arguments[0].scrollIntoView(true);", cards[index])
     print('Проскроллил к карточке')
     
+    title = cards[index].get_attribute("title")
+    if title == 'Подарочные сертификаты':
+        msg = "название 'Подарочные сертификаты', это не спец предложение, возвращаемся на страницу с офферами"
+        raise ValueError(msg)
+ 
     # Кликаем по карточке
     cards[index].click()
 
@@ -159,6 +164,8 @@ def extract_date_before_ai(text: str) -> str:
     # Создаем соответствующий промт
     promt = f'''Проанализируй текст спецпредложения и выдели все диапазоны дат бронирования (период, в который можно забронировать).
                 Верни строго JSON-массив, где каждый элемент — массив из двух строк дат в формате ДД.ММ.ГГГГ, например: [["01.05.2024","31.05.2024"], ...].
+                Не возвращай даты из прошлого относительно сегодняшнего дня. Если из текста получается дата раньше сегодня — опусти её или подбери корректный год так, чтобы конец периода был не раньше начала.
+                Начало периода должно быть <= конца периода.
                 Если дат бронирования нет, верни [] без лишнего текста.
                 Текст: {text}'''
     
@@ -250,48 +257,42 @@ def collect_offer_data(browser):
     title = browser.find_element(By.CLASS_NAME, 'f-h1')
     print(f"Получил название спецпредложения: {title.text}")
     
-    # Если название 'Подарочные сертификаты', пропускаем итерацию, так как это не спец предложение
-    if title.text == 'Подарочные сертификаты':
-        print(f"название 'Подарочные сертификаты', это не спец предложение, возвращаемся на страницу с офферами")
-        
-        return None
+      
+    # Добавляем в список строку
+    lines.append(title.text)
+    # Переменной core присваиваем текст элемента, в котором обычно описывается суть спецпредложения, и указана скидка применимая к стоимости проживания
+    core = browser.find_element(By.XPATH, "//div[contains(@class, 'block--content is_cascade')]/p")
+    # Добавляем суть в список
+    lines.append(core.text)
     
-    else:   
-        # Добавляем в список строку
-        lines.append(title.text)
-        # Переменной core присваиваем текст элемента, в котором обычно описывается суть спецпредложения, и указана скидка применимая к стоимости проживания
-        core = browser.find_element(By.XPATH, "//div[contains(@class, 'block--content is_cascade')]/p")
-        # Добавляем суть в список
-        lines.append(core.text)
-        
-        # С помощью функции получаем формулу расчитывающую стоимость суток
-        formula = get_formula(core.text)
-        print(f"Получил формулу расчитывающую стоимость суток")
-             
-        wait = WebDriverWait(browser, 10)
-
-        ul_element = wait.until(EC.presence_of_element_located((
-            By.XPATH,
-            "//*[starts-with(local-name(), 'h') and contains(normalize-space(.), 'Условия')]/following::ul[1]"
-        )))
-
-        li_elements = ul_element.find_elements(By.TAG_NAME, "li")
-
-        # Получаем текст каждого найденного элемента <li>, записывая его в переменную 's'
-        for li in li_elements:
-            s = li.text
-            # Добавляем строку в общий список
-            lines.append(s)
+    # С помощью функции получаем формулу расчитывающую стоимость суток
+    formula = get_formula(core.text)
+    print(f"Получил формулу расчитывающую стоимость суток")
             
-            # Если в строке нашлась категория, присваем ее переменной category
-            if get_category(s):
-                category = get_category(s)
-                print("Получил категории подходящие под спецпредложение")
-                                
-            # Если в строке нашлась информация о суммировании скидок, присваиваем ее перемнной summ_offers
-            if analyze_offers(s):
-                summ_with_loyalty = analyze_offers(s)
-                print(f"Получил информацию о суммировании скидок")
+    wait = WebDriverWait(browser, 10)
+
+    ul_element = wait.until(EC.presence_of_element_located((
+        By.XPATH,
+        "//*[starts-with(local-name(), 'h') and contains(normalize-space(.), 'Условия')]/following::ul[1]"
+    )))
+
+    li_elements = ul_element.find_elements(By.TAG_NAME, "li")
+
+    # Получаем текст каждого найденного элемента <li>, записывая его в переменную 's'
+    for li in li_elements:
+        s = li.text
+        # Добавляем строку в общий список
+        lines.append(s)
+        
+        # Если в строке нашлась категория, присваем ее переменной category
+        if get_category(s):
+            category = get_category(s)
+            print("Получил категории подходящие под спецпредложение")
+                            
+        # Если в строке нашлась информация о суммировании скидок, присваиваем ее перемнной summ_offers
+        if analyze_offers(s):
+            summ_with_loyalty = analyze_offers(s)
+            print(f"Получил информацию о суммировании скидок")
                 
         # Формируем единный строку со всей информацией о спецпредложении удаляя из нее не нужные боту строки
         offer_text = '\n'.join(lines)

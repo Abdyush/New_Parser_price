@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -24,6 +25,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+logger = logging.getLogger(__name__)
 
 
 async def on_startup(bot: Bot):
@@ -34,7 +36,7 @@ async def on_startup(bot: Bot):
     ]
 
     await bot.set_my_commands(commands)
-    print("Bot commands installed")
+    logger.info("Bot commands installed")
 
 
 def build_redis_storage() -> RedisStorage:
@@ -46,20 +48,24 @@ def build_redis_storage() -> RedisStorage:
 
 async def main():
     storage = build_redis_storage()
-    async with Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
-        dp = Dispatcher(storage=storage)
-        dp.include_router(registration_router)
-        dp.include_router(profile_router)
-        dp.include_router(notifications_handlers.router)
+    bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher(storage=storage)
+    dp.include_router(registration_router)
+    dp.include_router(profile_router)
+    dp.include_router(notifications_handlers.router)
 
-        await on_startup(bot)
+    await on_startup(bot)
 
-        print("Bot is running...")
-        try:
-            await dp.start_polling(bot)
-        finally:
-            await storage.close()
-            await storage.wait_closed()
+    logger.info("Bot is running...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await storage.close()
+        await storage.wait_closed()
+        await bot.session.close()
+
+
+run_bot = main
 
 
 if __name__ == "__main__":

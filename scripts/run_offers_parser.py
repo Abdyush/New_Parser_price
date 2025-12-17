@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -24,7 +25,8 @@ def truncate_offers_tables(conn):
     print("[trace] special_offers tables cleared")
 
 
-if __name__ == "__main__":
+def run():
+    start_ts = time.perf_counter()
     print("[trace] run_offer_parser main start")
 
     options = create_browser_options()
@@ -45,4 +47,9 @@ if __name__ == "__main__":
 
             service.parse_offers()
 
-    print("[trace] run_offer_parser main done")
+    elapsed = time.perf_counter() - start_ts
+    print(f"[trace] run_offer_parser main done in {elapsed:.2f}s")
+
+
+if __name__ == "__main__":
+    run()

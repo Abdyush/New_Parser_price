@@ -18,9 +18,10 @@ from infrastructure.db.common_db import get_connection
 from infrastructure.db.postgres_price_repo import PostgresPriceRepository
 from infrastructure.selen.hotel_gateway import SeleniumHotelGateway
 from parser.funcs.common_funcs import create_browser_options
+import time
 
-WORKER_COUNT = 4
-CHUNK_DAYS = 4
+WORKER_COUNT = 1
+CHUNK_DAYS = 5
 MAX_ATTEMPTS = 3
 CSV_ENCODING = "utf-8-sig"
 
@@ -235,9 +236,10 @@ def update_parser_status(status: str, last_completed_date=None, failed_at=None, 
         conn.commit()
 
 
-if __name__ == "__main__":
+def run(start_date=None):
+    start_ts = time.perf_counter()
     multiprocessing.set_start_method("spawn", force=True)
-    start_date = datetime.today().date()
+    start_date = start_date or datetime.today().date()
 
     print("[trace] run_price_parser main start")
     print(
@@ -337,3 +339,9 @@ if __name__ == "__main__":
         update_parser_status("ok", last_completed_date, None, None)
 
     print(f"[trace] all workers completed; success={completed}, failed={failed}")
+    elapsed = time.perf_counter() - start_ts
+    print(f"[trace] run_price_parser finished in {elapsed:.2f}s")
+
+
+if __name__ == "__main__":
+    run()
