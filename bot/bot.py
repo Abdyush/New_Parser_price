@@ -17,6 +17,7 @@ if ROOT not in sys.path:
 from bot.handlers.registration import router as registration_router
 from bot.handlers.profile import router as profile_router
 from bot.handlers import notifications as notifications_handlers
+from bot.handlers.admin import router as admin_router
 
 
 load_dotenv()
@@ -53,6 +54,7 @@ async def main():
     dp.include_router(registration_router)
     dp.include_router(profile_router)
     dp.include_router(notifications_handlers.router)
+    dp.include_router(admin_router)
 
     await on_startup(bot)
 
