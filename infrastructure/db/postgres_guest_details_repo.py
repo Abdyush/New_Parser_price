@@ -145,3 +145,34 @@ class PostgresGuestRepository:
                 (flag, telegram_id)
             )
         self.conn.commit()
+
+    def count_guests(self) -> int:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM guest_details")
+            row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def list_guests(self, limit: int, offset: int) -> List[dict]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT telegram_id, first_name, last_name, desired_price_per_night
+                FROM guest_details
+                ORDER BY created_at DESC NULLS LAST, id DESC
+                LIMIT %s OFFSET %s
+                """,
+                (limit, offset),
+            )
+            rows = cur.fetchall()
+
+        guests: List[dict] = []
+        for telegram_id, first_name, last_name, desired_price_per_night in rows:
+            guests.append(
+                {
+                    "telegram_id": telegram_id,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "desired_price_per_night": desired_price_per_night,
+                }
+            )
+        return guests
