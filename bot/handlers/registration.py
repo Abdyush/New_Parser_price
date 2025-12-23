@@ -1,3 +1,5 @@
+import os
+
 from aiogram import Router
 from aiogram.enums import ParseMode
 import html
@@ -12,8 +14,13 @@ from bot.states.registration import Registration
 from bot.keyboards.categories_kb import categories_keyboard, CATEGORY_MAP, CATEGORY_REVERSE
 from bot.keyboards.loyalty_kb import loyalty_keyboard
 from infrastructure.db.postgres_guest_details_repo import PostgresGuestRepository
+from infrastructure.db.admin_notifications_repo import (
+    ensure_admin_notifications_table,
+    insert_admin_notification,
+)
 from infrastructure.db.common_db import get_connection
 from bot.keyboards.main_menu_kb import main_menu_keyboard
+from bot.keyboards.admin_notifications_kb import new_user_notification_keyboard
 
 
 def _normalize_loyalty_status(status: str | None) -> LoyaltyStatus:
@@ -54,6 +61,43 @@ def guest_summary(guest) -> str:
         f"<b>Желаемая цена:</b> {guest.desired_price_per_night} ₽"
     )
 
+
+
+
+def _get_admin_ids() -> set[int]:
+    raw = os.getenv("ADMIN_TELEGRAM_ID", "")
+    ids: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            ids.add(int(token))
+        except ValueError:
+            continue
+    return ids
+
+
+async def _notify_admins_new_user(bot, guest) -> None:
+    admin_ids = _get_admin_ids()
+    if not admin_ids:
+        return
+    message = f"\u0417\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043b\u0441\u044f \u043d\u043e\u0432\u044b\u0439 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c: {guest.first_name} {guest.last_name}."
+    with get_connection() as conn:
+        ensure_admin_notifications_table(conn)
+        notif_id = insert_admin_notification(
+            conn,
+            guest.telegram_id,
+            guest.first_name,
+            guest.last_name,
+            message,
+        )
+    keyboard = new_user_notification_keyboard(guest.telegram_id, notif_id)
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(admin_id, message, reply_markup=keyboard)
+        except Exception as exc:
+            print(f"[warn] failed to notify admin {admin_id}: {exc}")
 
 router = Router()
 
@@ -394,6 +438,8 @@ async def process_desired_price(message: Message, state: FSMContext):
     with get_connection() as conn:
         repo = PostgresGuestRepository(conn)
         repo.save_guest(guest)
+
+    await _notify_admins_new_user(message.bot, guest)
 
     await message.answer("Анкета успешно сохранена! 🎉")
     

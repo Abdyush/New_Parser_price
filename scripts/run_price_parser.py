@@ -2,10 +2,12 @@ import csv
 import multiprocessing
 import os
 import sys
+import time
 import traceback
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from multiprocessing import Manager, Process
+from uuid import uuid4
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -16,12 +18,12 @@ from selenium import webdriver
 from app.price_parsing_service import PriceParsingService
 from infrastructure.db.common_db import get_connection
 from infrastructure.db.postgres_price_repo import PostgresPriceRepository
+from infrastructure.system_event_logger import log_event
 from infrastructure.selen.hotel_gateway import SeleniumHotelGateway
 from parser.funcs.common_funcs import create_browser_options
-import time
 
-WORKER_COUNT = 1
-CHUNK_DAYS = 5
+WORKER_COUNT = 2
+CHUNK_DAYS = 7
 MAX_ATTEMPTS = 3
 CSV_ENCODING = "utf-8-sig"
 
@@ -238,12 +240,21 @@ def update_parser_status(status: str, last_completed_date=None, failed_at=None, 
 
 def run(start_date=None):
     start_ts = time.perf_counter()
+    run_id = str(uuid4())
     multiprocessing.set_start_method("spawn", force=True)
     start_date = start_date or datetime.today().date()
 
     print("[trace] run_price_parser main start")
     print(
         f"[trace] parameters prepared start={start_date}, chunk_days={CHUNK_DAYS}, workers={WORKER_COUNT}"
+    )
+    log_event(
+        level="INFO",
+        source="price_parser",
+        event="started",
+        message=f"start_date={start_date}",
+        meta={"start_date": str(start_date), "chunk_days": CHUNK_DAYS, "workers": WORKER_COUNT},
+        run_id=run_id,
     )
 
     ensure_parser_status_table()
@@ -335,8 +346,34 @@ def run(start_date=None):
             else "Парсер собрал не все данные."
         )
         update_parser_status("partial", last_completed_date, failed_at, warn_msg)
+        log_event(
+            level="WARNING",
+            source="price_parser",
+            event="completed",
+            message=warn_msg,
+            meta={
+                "status": "partial",
+                "last_completed_date": str(last_completed_date) if last_completed_date else None,
+                "failed_at": str(failed_at) if failed_at else None,
+                "failed_workers": failed,
+            },
+            run_id=run_id,
+            duration_ms=int((time.perf_counter() - start_ts) * 1000),
+        )
     else:
         update_parser_status("ok", last_completed_date, None, None)
+        log_event(
+            level="INFO",
+            source="price_parser",
+            event="completed",
+            message="status=ok",
+            meta={
+                "status": "ok",
+                "last_completed_date": str(last_completed_date) if last_completed_date else None,
+            },
+            run_id=run_id,
+            duration_ms=int((time.perf_counter() - start_ts) * 1000),
+        )
 
     print(f"[trace] all workers completed; success={completed}, failed={failed}")
     elapsed = time.perf_counter() - start_ts

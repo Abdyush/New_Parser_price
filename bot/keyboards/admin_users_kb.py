@@ -9,12 +9,20 @@ def users_list_keyboard(rows: list[tuple[str, int]], page: int, total_pages: int
             [InlineKeyboardButton(text=label, callback_data=f"admin_user:{telegram_id}:{page}")]
         )
 
-    prev_page = page - 1 if page > 1 else page
-    next_page = page + 1 if page < total_pages else page
+    can_prev = page > 1
+    can_next = page < total_pages
+    prev_page = page - 1 if can_prev else page
+    next_page = page + 1 if can_next else page
     buttons.append(
         [
-            InlineKeyboardButton(text="<-", callback_data=f"admin_users_page:{prev_page}"),
-            InlineKeyboardButton(text="->", callback_data=f"admin_users_page:{next_page}"),
+            InlineKeyboardButton(
+                text="<-",
+                callback_data=f"admin_users_page:{prev_page}" if can_prev else "admin_users_noop",
+            ),
+            InlineKeyboardButton(
+                text="->",
+                callback_data=f"admin_users_page:{next_page}" if can_next else "admin_users_noop",
+            ),
         ]
     )
 
